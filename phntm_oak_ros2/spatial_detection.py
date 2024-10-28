@@ -139,6 +139,7 @@ async def async_loop():
             # Print MxID, USB speed, and available cameras on the device
             print('Connected camera:', device.getProductName(), f'(MxId: {device.getDeviceInfo().getMxId()})')
             print('USB speed:', device.getUsbSpeed())
+            print('IMU:', device.getConnectedIMU(), f'(Firmware: {device.getIMUFirmwareVersion()})', 'Rotation vector available' if device.getConnectedIMU() == 'BNO086' else 'Rotation vector not available (only provided by BNO086)')
             print('Connected cameras:', device.getConnectedCameras())
             print('RGB:', camRgb.getResolution(), camRgb.getFps())
             print('monoLeft:', monoLeft.getResolution(), monoLeft.getFps())

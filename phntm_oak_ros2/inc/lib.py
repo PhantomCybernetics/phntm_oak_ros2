@@ -22,13 +22,16 @@ time_send_total = 0.0
 last_pub_sub_states = {}
 def publisher_subscribed(pub) -> bool:
     global last_pub_sub_states
-    has_subs = pub.get_subscription_count() > 0
-    log = not pub.topic_name in last_pub_sub_states.keys() \
-          or last_pub_sub_states[pub.topic_name] != has_subs
-    if log:
-        print(c(f'Publisher {pub.topic_name} {"subscribed" if has_subs else ("unsubscribed" if pub.topic_name in last_pub_sub_states.keys() else "not subscribed")}', 'green' if has_subs else 'cyan'))
-    last_pub_sub_states[pub.topic_name] = has_subs
-    return has_subs
+    try:
+        has_subs = pub.get_subscription_count() > 0
+        log = not pub.topic_name in last_pub_sub_states.keys() \
+            or last_pub_sub_states[pub.topic_name] != has_subs
+        if log:
+            print(c(f'Publisher {pub.topic_name} {"subscribed" if has_subs else ("unsubscribed" if pub.topic_name in last_pub_sub_states.keys() else "not subscribed")}', 'green' if has_subs else 'cyan'))
+        last_pub_sub_states[pub.topic_name] = has_subs
+        return has_subs
+    except:
+        return False
 
 
 def set_message_header(frame, msg):
