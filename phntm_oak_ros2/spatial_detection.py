@@ -21,10 +21,12 @@ import array
 import ctypes
 import asyncio
 
+from termcolor import colored as c
+
 from sensor_msgs.msg import Image
 from ffmpeg_image_transport_msgs.msg import FFMPEGPacket
 
-from .inc.lib import set_message_header, msg_data_from_frame, image_frame_loop, video_frame_loop
+from .inc.lib import set_message_header, msg_data_from_frame, image_frame_loop, video_frame_loop, publisher_subscribed
 
 async def async_loop():
     
@@ -157,12 +159,15 @@ async def async_loop():
             color = (255, 255, 255)
             printOutputLayersOnce = True
 
-            # TODO only when subscribed
-            # asyncio.get_event_loop().create_task(image_frame_loop(previewQueue, rgb_prev_pub, rcl_node))
-            # asyncio.get_event_loop().create_task(image_frame_loop(depthQueue, depth_pub, rcl_node))
+            asyncio.get_event_loop().create_task(image_frame_loop(previewQueue, rgb_prev_pub, rcl_node))
+            asyncio.get_event_loop().create_task(image_frame_loop(depthQueue, depth_pub, rcl_node))
             asyncio.get_event_loop().create_task(video_frame_loop(rgbH264Queue, rgb_h264_pub, rcl_node))
             
             while True:
+                
+                if not publisher_subscribed(det_3d_pub):
+                    await asyncio.sleep(0.5)
+                    continue
                 
                 if detectionNNQueue.has():
                     det_3d_msg = Detection3DArray()

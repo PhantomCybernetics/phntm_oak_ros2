@@ -4,7 +4,7 @@ import depthai as dai
 import numpy as np
 import array
 import asyncio
-
+from termcolor import colored as c
 import av
 import fractions
 
@@ -19,6 +19,18 @@ num_copy_samples = 0
 time_copy_total = 0.0
 time_send_total = 0.0
 
+last_pub_sub_states = {}
+def publisher_subscribed(pub) -> bool:
+    global last_pub_sub_states
+    has_subs = pub.get_subscription_count() > 0
+    log = not pub.topic_name in last_pub_sub_states.keys() \
+          or last_pub_sub_states[pub.topic_name] != has_subs
+    if log:
+        print(c(f'Publisher {pub.topic_name} {"subscribed" if has_subs else ("unsubscribed" if pub.topic_name in last_pub_sub_states.keys() else "not subscribed")}', 'green' if has_subs else 'cyan'))
+    last_pub_sub_states[pub.topic_name] = has_subs
+    return has_subs
+
+
 def set_message_header(frame, msg):
     time_nanosec:int = time.time_ns()
     msg.header.stamp.sec = math.floor(time_nanosec / 1000000000)
@@ -30,6 +42,10 @@ async def image_frame_loop(q, pub, rcl_node):
     try:
     
         while True:
+            
+            if not publisher_subscribed(pub):
+                await asyncio.sleep(0.5)
+                continue
             
             if q.has():
                 buf = q.get()
@@ -48,6 +64,11 @@ async def video_frame_loop(q, pub, rcl_node):
     try:
         
         while True:
+            
+            if not publisher_subscribed(pub):
+                await asyncio.sleep(0.5)
+                continue
+            
             if q.has():
                 buf = q.get()
                 frame_bytes = buf.getData()
