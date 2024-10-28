@@ -20,8 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'tracker_test = phntm_oak_ros2.oak_tracker_test:main',
-            'detector_test = phntm_oak_ros2.oak_detector_test:main'
+            'spatial_detection = phntm_oak_ros2.spatial_detection:main'
         ],
     },
 )
