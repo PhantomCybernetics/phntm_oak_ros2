@@ -63,24 +63,29 @@ async def image_frame_loop(q, pub, rcl_node):
     except (KeyboardInterrupt, asyncio.CancelledError):
         print('Stopping frame loop...')
 
-async def video_frame_loop(q, pub, rcl_node):
+def video_frame_loop(q, pub, rcl_node):
     try:
-        
-        while True:
-            
-            if not publisher_subscribed(pub):
-                await asyncio.sleep(0.5)
-                continue
-            
-            if q.has():
-                buf = q.get()
-                frame_bytes = buf.getData()
-                frame = dai.EncodedFrame()
-                frame.setFrameType(dai.EncodedFrame.FrameType.Unknown)
-                frame.setData(frame_bytes)
+        try:
+            while True:
                 
-                keyframe = frame.getFrameType() == dai.EncodedFrame.FrameType.I
-                #print (f'Got video frame {len(frame_bytes)}B {frame.getFrameType()}')
+                # if not publisher_subscribed(pub):
+                #     sleep()
+                #     continue
+                
+                # if not q.has():
+                #     await asyncio.sleep(0.001)
+                #     continue
+                
+                buf = q.get() # blocks
+                frame_bytes = buf.getData()
+                
+                # THIS DOES NOTHING
+                # frame = dai.EncodedFrame()
+                # frame.setFrameType(dai.EncodedFrame.FrameType.Unknown)
+                # frame.setData(frame_bytes)
+                # keyframe = frame.getFrameType() == dai.EncodedFrame.FrameType.I
+                # print (f'Got video frame {len(frame_bytes)}B {frame.getFrameType()}')
+                keyframe = True
                 
                 msg = FFMPEGPacket()
                 set_message_header('', msg)
@@ -96,8 +101,10 @@ async def video_frame_loop(q, pub, rcl_node):
                 
                 if rcl_node.context.ok():
                     pub.publish(msg)
-                
-            await asyncio.sleep(0.001)
+                    
+                # await asyncio.sleep(0.001)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            print('Stopping video thread...')
             
     except (KeyboardInterrupt, asyncio.CancelledError):
         print('Stopping frame loop...')
