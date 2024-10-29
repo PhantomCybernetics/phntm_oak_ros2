@@ -8,7 +8,8 @@ RUN apt-get install -y ssh \
                        vim mc \
                        iputils-ping net-tools iproute2 curl \
                        pip \
-                       libusb-1.0-0-dev
+                       libusb-1.0-0-dev \
+                       ros-$ROS_DISTRO-xacro
 
 RUN pip install --upgrade pip
 
