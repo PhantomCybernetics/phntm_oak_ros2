@@ -10,7 +10,7 @@ import depthai as dai
 import numpy as np
 import time
 import argparse
-from vision_msgs.msg import Detection3DArray, Detection3D, ObjectHypothesisWithPose
+from vision_msgs.msg import Detection3DArray, Detection3D, ObjectHypothesisWithPose, Detection2DArray, Detection2D
 import math
 import rclpy
 from rclpy.node import Node, Parameter, QoSProfile, Publisher
@@ -26,15 +26,17 @@ from termcolor import colored as c
 
 from sensor_msgs.msg import Image
 from ffmpeg_image_transport_msgs.msg import FFMPEGPacket
+from sensor_msgs.msg import CameraInfo
 
-from .inc.lib import set_message_header, msg_data_from_frame, image_frame_loop, video_frame_loop, publisher_subscribed
+from .inc.lib import set_message_header, msg_data_from_frame, image_frame_loop, video_frame_loop, publisher_subscribed, msg_camera_info, adjust_intrinsics
 
 async def async_loop():
     
     rcl_node = Node(node_name='oak')
     
-    det_3d_qos = QoSProfile(history=QoSHistoryPolicy.KEEP_LAST, depth=1, reliability=QoSReliabilityPolicy.BEST_EFFORT)
-    det_3d_pub = rcl_node.create_publisher(Detection3DArray, '/oak/nn/yolo8/spatial_detections', det_3d_qos)
+    det_qos = QoSProfile(history=QoSHistoryPolicy.KEEP_LAST, depth=1, reliability=QoSReliabilityPolicy.BEST_EFFORT)
+    det_3d_pub = rcl_node.create_publisher(Detection3DArray, '/oak/nn/yolo8/spatial_detections', det_qos)
+    det_2d_pub = rcl_node.create_publisher(Detection2DArray, '/oak/nn/yolo8/detections', det_qos)
     
     depth_qos = QoSProfile(history=QoSHistoryPolicy.KEEP_LAST, depth=1, reliability=QoSReliabilityPolicy.BEST_EFFORT)
     depth_pub = rcl_node.create_publisher(Image, '/oak/stereo/image_raw', depth_qos)
@@ -45,12 +47,22 @@ async def async_loop():
     rgb_h264_qos = QoSProfile(history=QoSHistoryPolicy.KEEP_LAST, depth=1, reliability=QoSReliabilityPolicy.BEST_EFFORT)
     rgb_h264_pub = rcl_node.create_publisher(FFMPEGPacket, '/oak/rgb/image_raw/compressed', rgb_h264_qos)
     
-    labelMap = [ 'person', 'bicycle', 'car', 'motorbike', 'aeroplane', 'bus', 'train', 'truck', 'boat', 'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball', 'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple', 'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair', 'sofa', 'potted plant', 'bed', 'dining table', 'toilet', 'tv monitor', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush' ] 
-    #nnBlobPath = '/ros2_ws/src/phntm_oak_ros2/models/tiny-yolo-v4_openvino_2021.2_6shave.blob'
-    nnBlobPath = '/ros2_ws/src/phntm_oak_ros2/models/yolov8n_coco_640x352_5_shaves.blob'
-    nn_w = 640
-    nn_h = 352
+    camera_info_qos = QoSProfile(history=QoSHistoryPolicy.KEEP_LAST, depth=1, reliability=QoSReliabilityPolicy.RELIABLE)
+    rgb_info_pub = rcl_node.create_publisher(CameraInfo, '/oak/rgb/camera_info', camera_info_qos)
+    prev_info_pub = rcl_node.create_publisher(CameraInfo, '/oak/rgb/preview/camera_info', camera_info_qos)
+    left_info_pub = rcl_node.create_publisher(CameraInfo, '/oak/left/camera_info', camera_info_qos)
+    right_info_pub = rcl_node.create_publisher(CameraInfo, '/oak/right/camera_info', camera_info_qos)
 
+    nn_blob_path = '/ros2_ws/src/phntm_oak_ros2/models/tiny-yolo-v4_openvino_2021.2_6shave.blob'
+    nn_inference_threads = 1 # keeps crashing with 2+
+    nn_w = 416
+    nn_h = 416
+    
+    # nn_blob_path = '/ros2_ws/src/phntm_oak_ros2/models/yolov8n_coco_640x352_5_shaves.blob'
+    # nn_inference_threads = 2 # more threads for the encoder??
+    # nn_w = 640
+    # nn_h = 352
+    
     # Create pipeline
     pipeline = dai.Pipeline()
 
@@ -88,11 +100,12 @@ async def async_loop():
     #camRgb.setPreviewSize(416, 416)
     camRgb.setPreviewSize(nn_w, nn_h)
     camRgb.setFps(30)
-    camRgb.setVideoSize(1280, 720)
+    # camRgb.setVideoSize(1280, 720)
     camRgb.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
     camRgb.setInterleaved(False)
     camRgb.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
-
+    # camRgb.setPreviewKeepAspectRatio(False)
+    
     monoLeft.setResolution(dai.MonoCameraProperties.SensorResolution.THE_480_P)
     monoLeft.setCamera("left")
     monoRight.setResolution(dai.MonoCameraProperties.SensorResolution.THE_480_P)
@@ -118,7 +131,7 @@ async def async_loop():
     # stereo.setLeftRightCheck(True)
     # stereo.setExtendedDisparity(True)
     
-    spatialDetectionNetwork.setBlobPath(nnBlobPath)
+    spatialDetectionNetwork.setBlobPath(nn_blob_path)
     spatialDetectionNetwork.setConfidenceThreshold(0.5)
     spatialDetectionNetwork.input.setBlocking(False)
     spatialDetectionNetwork.setBoundingBoxScaleFactor(0.5)
@@ -131,7 +144,7 @@ async def async_loop():
     spatialDetectionNetwork.setAnchors([10,14, 23,27, 37,58, 81,82, 135,169, 344,319])
     spatialDetectionNetwork.setAnchorMasks({ "side26": [1,2,3], "side13": [3,4,5] })
     spatialDetectionNetwork.setIouThreshold(0.5)
-    spatialDetectionNetwork.setNumInferenceThreads(2)
+    spatialDetectionNetwork.setNumInferenceThreads(nn_inference_threads)
 
     # Linking
     monoLeft.out.link(stereo.left)
@@ -157,7 +170,9 @@ async def async_loop():
         print('RGB:', camRgb.getResolution(), camRgb.getFps())
         print('monoLeft:', monoLeft.getResolution(), monoLeft.getFps())
         print('monoRight:', monoRight.getResolution(), monoRight.getFps())
-        print('NN:', nnBlobPath, f'{nn_w}x{nn_h}')
+        print('NN:', nn_blob_path, f'{nn_w}x{nn_h}')
+        
+        calibData = device.readCalibration()
         
         # Output queues will be used to get the rgb frames and nn data from the outputs defined above
         previewQueue = device.getOutputQueue(name="rgb", maxSize=1, blocking=False)
@@ -184,20 +199,33 @@ async def async_loop():
         try:
             while True:
                 
+                rgb_intrinsics = calibData.getCameraIntrinsics(dai.CameraBoardSocket.RGB, camRgb.getResolutionWidth(), camRgb.getResolutionHeight(), keepAspectRatio=False)
+                prev_intrinsics = adjust_intrinsics(sensor_res=(camRgb.getResolutionWidth(), camRgb.getResolutionHeight()),
+                                                    initial_crop=(camRgb.getResolutionHeight(), camRgb.getResolutionHeight()),
+                                                    output_resolution=(camRgb.getPreviewWidth(), camRgb.getPreviewHeight()),
+                                                    intrinsics=rgb_intrinsics,
+                                                    keepAspectRatio=True)
+                msg_camera_info(rgb_intrinsics, camRgb.getResolutionWidth(), camRgb.getResolutionHeight(), 'oak_rgb_camera_optical_frame', rgb_info_pub, rcl_node)
+                msg_camera_info(prev_intrinsics, camRgb.getPreviewWidth(), camRgb.getPreviewHeight(), 'oak_rgb_camera_optical_frame', prev_info_pub, rcl_node)
+                fx = prev_intrinsics[0][0]
+                fy = prev_intrinsics[1][1]
+                # cx = rgb_intrinsics[0][2]
+                # cy = rgb_intrinsics[1][2]
+                
                 # if not publisher_subscribed(det_3d_pub):
                 #     await asyncio.sleep(0.5)
                 #     continue
                 
                 det_3d_msg = Detection3DArray()
-                set_message_header('oak_rgb_camera_optical_frame', det_3d_msg)
-                
-                # while not (previewQueue.has() and detectionNNQueue.has() and depthQueue.has() and networkQueue.has()):
-                #     await asyncio.sleep(0.001)
+                det_2d_msg = Detection2DArray()
                     
-                inPreview = previewQueue.get()
-                inDet = detectionNNQueue.get()
-                depth = depthQueue.get()
-                inNN = networkQueue.get()
+                inPreview = previewQueue.get() # blocks
+                inDet = detectionNNQueue.get() # blocks
+                #depth = depthQueue.get() # blocks
+                inNN = networkQueue.get() # blocks
+                
+                set_message_header('oak_rgb_camera_optical_frame', det_3d_msg)
+                set_message_header('oak_rgb_camera_optical_frame', det_2d_msg)
 
                 if printOutputLayersOnce:
                     toPrint = 'Output layer names:'
@@ -206,75 +234,55 @@ async def async_loop():
                     print(toPrint)
                     printOutputLayersOnce = False
 
-                frame = inPreview.getCvFrame()
-                depthFrame = depth.getFrame() # depthFrame values are in millimeters
+                prev_frame = inPreview.getCvFrame()
+                #depthFrame = depth.getFrame() # depthFrame values are in millimeters
 
                 # asyncio.get_event_loop().run_in_executor(None, msg_data_from_frame, inPreview, frame, rgb_prev_msg, rgb_prev_pub, rcl_node)
                 # asyncio.get_event_loop().run_in_executor(None, msg_data_from_frame, depth, depthFrame, depth_msg, depth_pub, rcl_node)
 
-                depth_downscaled = depthFrame[::4]
-                if np.all(depth_downscaled == 0):
-                    min_depth = 0  # Set a default minimum depth value when all elements are zero
-                else:
-                    min_depth = np.percentile(depth_downscaled[depth_downscaled != 0], 1)
-                max_depth = np.percentile(depth_downscaled, 99)
+                #depth_downscaled = depthFrame[::4]
+                #max_depth = np.percentile(depth_downscaled, 99)
                 #depthFrameColor = np.interp(depthFrame, (min_depth, max_depth), (0, 255)).astype(np.uint8)
                 #depthFrameColor = cv2.applyColorMap(depthFrameColor, cv2.COLORMAP_HOT)
-
-                counter+=1
-                current_time = time.monotonic()
-                if (current_time - startTime) > 1 :
-                    fps = counter / (current_time - startTime)
-                    counter = 0
-                    startTime = current_time
 
                 detections = inDet.detections
 
                 # If the frame is available, draw bounding boxes on it and show the frame
-                height = frame.shape[0]
-                width  = frame.shape[1]
+                prev_height = prev_frame.shape[0]
+                prev_width  = prev_frame.shape[1]
+                
+                # prev_to_cam_rgb_x = 1.0 #camRgb.getResolutionWidth() / prev_width 
+                # prev_to_cam_rgb_y = 1.0 #camRgb.getResolutionHeight() / prev_height
                 
                 for detection in detections:
-                    roiData = detection.boundingBoxMapping
-                    roi = roiData.roi
-                    roi = roi.denormalize(depthFrame.shape[1], depthFrame.shape[0])
-                    topLeft = roi.topLeft()
-                    bottomRight = roi.bottomRight()
-                    xmin = int(topLeft.x)
-                    ymin = int(topLeft.y)
-                    xmax = int(bottomRight.x)
-                    ymax = int(bottomRight.y)
-                    #cv2.rectangle(depthFrameColor, (xmin, ymin), (xmax, ymax), color, 1)
-
-                    # Denormalize bounding box
-                    x1 = int(detection.xmin * width)
-                    x2 = int(detection.xmax * width)
-                    y1 = int(detection.ymin * height)
-                    y2 = int(detection.ymax * height)
-                    try:
-                        label = labelMap[detection.label]
-                    except:
-                        label = detection.label
+                    # Denormalize bounding box to preview frame size
+                    x1 = int(detection.xmin * prev_width)
+                    x2 = int(detection.xmax * prev_width)
+                    y1 = int(detection.ymin * prev_height)
+                    y2 = int(detection.ymax * prev_height)
             
                     xSize = x2 - x1
                     ySize = y2 - y1
                     xCenter = x1 + xSize / 2.0
                     yCenter = y1 + ySize / 2.0
                     
-                    # json.dumps(det)
-                    #print(f'{label} {detection.confidence:.2f} [{x1}, {y1}, {x2}, {y2}] => [{int(detection.spatialCoordinates.x)}; {int(detection.spatialCoordinates.y)}; {int(detection.spatialCoordinates.z)}]')
-                        
-                    # generate ros msg    
-                    res = Detection3D()
+                    # generate ros msgs 
+                    res3d = Detection3D()
+                    res2d = Detection2D()
                     
-                    res.bbox.center.position.x = xCenter
-                    res.bbox.center.position.y = yCenter
-                    res.bbox.size.x = float(xSize)
-                    res.bbox.size.y = float(ySize)
-                    res.bbox.size.z = 0.01
-
-                    res.results = []
+                    res2d.bbox.center.position.x = xCenter
+                    res2d.bbox.center.position.y = yCenter
+                    res2d.bbox.size_x = float(xSize)
+                    res2d.bbox.size_y = float(ySize)
                     
+                    p_z = detection.spatialCoordinates.z / 1000.0 # to m
+                    res3d.bbox.center.position.x = detection.spatialCoordinates.x / 1000.0 # mm => m
+                    res3d.bbox.center.position.y = -1.0 * detection.spatialCoordinates.y / 1000.0 # UPSIDE DOWN!
+                    res3d.bbox.size.x = xSize * (p_z / fx)
+                    res3d.bbox.size.y = ySize * (p_z / fy)
+                    res3d.bbox.size.z = 0.01
+                    
+                    # hypothesis is the same for both 2d and 3d
                     hyp = ObjectHypothesisWithPose()
                     hyp.hypothesis.class_id = str(detection.label)
                     hyp.hypothesis.score = detection.confidence
@@ -283,13 +291,16 @@ async def async_loop():
                     hyp.pose.pose.position.y = -1.0 * detection.spatialCoordinates.y / 1000.0 # UPSIDE DOWN!
                     hyp.pose.pose.position.z = detection.spatialCoordinates.z / 1000.0
                     
-                    res.results.append(hyp)
-                    det_3d_msg.detections.append(res)
+                    res3d.results.append(hyp)
+                    res2d.results.append(hyp)
+                    
+                    det_3d_msg.detections.append(res3d)
+                    det_2d_msg.detections.append(res2d)
                     await asyncio.sleep(0)
                             
-                #print('---')
                 if rcl_node.context.ok():
                     det_3d_pub.publish(det_3d_msg)
+                    det_2d_pub.publish(det_2d_msg)
                 
                 #await asyncio.sleep(0)
                 

@@ -41,6 +41,14 @@
 			cam_pos_z="${cam_pos_z}" cam_roll="${cam_roll}" cam_pitch="${cam_pitch}"
 			cam_yaw="${cam_yaw}" has_imu="${has_imu}" simulation="${simulation}" />
 
+		<!-- Laser on the Camera Totem -->
+		<link name="laser" />
+		<joint name="laser_joint" type="fixed">
+			<parent link="${base_frame}" />
+			<child link="laser" />
+			<origin xyz="-0.036 0 0.092" rpy="0 0 0" />
+		</joint>
+
 		<!-- RGB Camera -->
 		<xacro:unless value="${model in ['OAK-D-SR']}">
 			<link name="${camera_name}_${rgb_name}_${frame_suffix}" />

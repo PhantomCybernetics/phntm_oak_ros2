@@ -17,7 +17,8 @@ RUN pip install setuptools \
                 opencv-python \
                 termcolor \
                 PyEventEmitter \
-                depthai
+                depthai \
+                av
 
 # init workspace
 ENV ROS_WS=/ros2_ws
